@@ -1,0 +1,16 @@
+# Ignorar todos los directorios
+*/
+
+# Ignorar todos los archivos
+*
+
+# Permitir únicamente ciertos archivos en la raíz
+!*.cpp
+!*.h
+!*.hpp
+!*.c
+!*.cmake
+!CMakeLists.txt
+!README.md
+!LICENSE
+!.gitignore
