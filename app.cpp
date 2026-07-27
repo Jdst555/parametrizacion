@@ -29,6 +29,11 @@ int current_method = 1; // 0: Harmonic, 1: LSCM, 2: ARAP
 int current_metric = 1; // 0: Ninguna, 1: MIPS, 2: L2 Stretch, 3: Area
 bool show_2d = false;
 
+// Variables para controlar el mapa de color
+bool auto_scale = true;
+float metric_min = 2.0f;
+float metric_max = 5.0f;
+
 // -------------------------------------------------------------------
 // 1. CÁLCULO DE VALORES SINGULARES
 // -------------------------------------------------------------------
@@ -93,7 +98,16 @@ void update_colors(igl::opengl::glfw::Viewer& viewer)
 
     // Mapear los valores a una escala de color jet
     Eigen::MatrixXd C;
-    igl::colormap(igl::COLOR_MAP_TYPE_JET, metric_values, true, C);
+
+    if (auto_scale) {
+        // Modo por defecto: usa el min y max reales de toda la malla
+        igl::colormap(igl::COLOR_MAP_TYPE_JET, metric_values, true, C);
+    }
+    else {
+        // Modo manual: clampeamos los colores entre nuestros valores
+        igl::colormap(igl::COLOR_MAP_TYPE_JET, metric_values, (double)metric_min, (double)metric_max, C);
+    }
+
     viewer.data().set_colors(C);
 }
 
@@ -201,6 +215,20 @@ int main(int argc, char* argv[])
                 update_colors(viewer); // Refrescar color al cambiar de métrica
             }
 
+            // --- NUEVOS CONTROLES DE RANGO DE COLOR ---
+            if (current_metric != 0) {
+                ImGui::Indent(); // Tabulamos un poco para que quede bonito
+                if (ImGui::Checkbox("Auto-Escalar Color", &auto_scale)) {
+                    update_colors(viewer);
+                }
+
+                if (!auto_scale) {
+                    // Si el usuario mueve estos sliders, repintamos en tiempo real
+                    if (ImGui::DragFloat("Rango Min", &metric_min, 0.05f)) update_colors(viewer);
+                    if (ImGui::DragFloat("Rango Max", &metric_max, 0.05f)) update_colors(viewer);
+                }
+                ImGui::Unindent();
+            }
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
             // Controles de Vista
