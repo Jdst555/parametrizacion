@@ -160,11 +160,11 @@ void update_colors(igl::opengl::glfw::Viewer& viewer)
 
     if (auto_scale) {
         // Modo por defecto: usa el min y max reales de toda la malla
-        igl::colormap(igl::COLOR_MAP_TYPE_JET, metric_values, true, C);
+        igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, true, C);
     }
     else {
         // Modo manual: clampeamos los colores entre nuestros valores
-        igl::colormap(igl::COLOR_MAP_TYPE_JET, metric_values, (double)metric_min, (double)metric_max, C);
+        igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, (double)metric_min, (double)metric_max, C);
     }
 
     viewer.data().set_colors(C);
