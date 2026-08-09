@@ -1,10 +1,5 @@
-#include <igl/boundary_loop.h>
-#include <igl/harmonic.h>
-#include <igl/lscm.h>
-#include <igl/arap.h>
-#include <igl/map_vertices_to_circle.h>
-#include <igl/read_triangle_mesh.h>
-#include <igl/writePLY.h>
+
+#include <igl/readOBJ.h>
 #include <igl/colormap.h> // Para los mapas de calor
 
 // Cabeceras del visor e ImGui
@@ -15,15 +10,13 @@
 
 #include <Eigen/Dense>
 #include <iostream>
-#include <string>
-#include <vector>
-#include <algorithm>
-#include <chrono> // Para medir el tiempo de ejecución
+//#include <string>
+//#include <vector>
+//#include <algorithm>
 
 // Variables globales para el estado de la aplicación
-Eigen::MatrixXd V, V_uv;//vértices de la malla 3d y de la parametrización 2d
-Eigen::MatrixXi F;//triángulos
-Eigen::VectorXi bnd;//vértices del borde
+Eigen::MatrixXd V, V_uv, N;//vértices, coordenadas uv, normales
+Eigen::MatrixXi F, FTC, FN;//triángulos
 Eigen::MatrixXd Sigmas;
 
 int current_method = 1; // 0: Harmonic, 1: LSCM, 2: ARAP
@@ -171,75 +164,20 @@ void update_colors(igl::opengl::glfw::Viewer& viewer)
 }
 
 // -------------------------------------------------------------------
-// 3. EJECUCIÓN DE LOS MÉTODOS DE PARAMETRIZACIÓN
-// -------------------------------------------------------------------
-void compute_parameterization()
-{
-    if (bnd.size() == 0) {
-        std::cerr << "Error: La malla no tiene bordes." << std::endl;
-        return;
-    }
-
-    // --- INICIO CRONÓMETRO ---
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    if (current_method == 0) { // HARMONIC
-        Eigen::MatrixXd bnd_uv;
-        igl::map_vertices_to_circle(V, bnd, bnd_uv);
-        igl::harmonic(V, F, bnd, bnd_uv, 1, V_uv);
-    }
-    else if (current_method == 1) { // LSCM
-        Eigen::VectorXi b(2, 1);
-        b(0) = bnd(0);
-        b(1) = bnd(bnd.size() / 2);
-        Eigen::MatrixXd bc(2, 2);
-        bc << 0, 0, 1, 0;
-        igl::lscm(V, F, b, bc, V_uv);
-    }
-    else if (current_method == 2) { // ARAP
-        Eigen::VectorXi b(2, 1);
-        b(0) = bnd(0); b(1) = bnd(bnd.size() / 2);
-        Eigen::MatrixXd bc(2, 2); bc << 0, 0, 1, 0;
-
-        Eigen::MatrixXd V_uv_initial;
-        igl::lscm(V, F, b, bc, V_uv_initial); // Initial guess
-
-        igl::ARAPData arap_data;
-        arap_data.max_iter = 100;
-        igl::arap_precomputation(V, F, 2, b, arap_data);
-
-        V_uv = V_uv_initial;
-        igl::arap_solve(bc, arap_data, V_uv);
-    }
-    // --- FIN CRONÓMETRO ---
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end_time - start_time;
-    compute_time = diff.count();
-
-    // Actualizamos valores singulares y luego las estadísticas globales
-    compute_sigmas();
-    compute_stats(); // <--- Llmamos a la nueva función
-    
-}
-
-// -------------------------------------------------------------------
 // MAIN
 // -------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
     if (argc < 2) {
-        std::cerr << "Uso: " << argv[0] << " <ruta_malla.off/obj/ply>" << std::endl;
+        std::cerr << "Uso: " << argv[0] << " <ruta_malla.obj>" << std::endl;
         return 1;
     }
 
     // 1. Cargar la malla
-    if (!igl::read_triangle_mesh(argv[1], V, F)) {
+    if (!igl::readOBJ(argv[2], V, V_uv, N, F, FTC, FN)) {
         std::cerr << "Error al cargar la malla." << std::endl;
         return 1;
     }
-
-    // 2. Extraer bordes
-    igl::boundary_loop(F, bnd);
 
     // Configurar el visor de libigl
     igl::opengl::glfw::Viewer viewer;
@@ -262,19 +200,7 @@ int main(int argc, char* argv[])
     // Definir la interfaz de usuario
     menu.callback_draw_viewer_window = [&]()
         {
-            ImGui::Text("TFM - Parametrización de Mallas");
-            ImGui::Spacing();
-
-            // Selector de método
-            ImGui::Combo("Algoritmo", &current_method, "Harmonic (Tutte)\0LSCM\0ARAP\0");
-
-            if (ImGui::Button("Calcular Parametrización", ImVec2(-1, 0))) {
-                compute_parameterization();
-                // Actualizar vista
-                if (show_2d) viewer.data().set_vertices(V_uv);
-                viewer.data().set_uv(V_uv);
-                update_colors(viewer);
-            }
+            ImGui::Text("Analisis de Parametrizacion");
 
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
@@ -305,7 +231,7 @@ int main(int argc, char* argv[])
             if (ImGui::RadioButton("Modelo 3D", !show_2d)) {
                 show_2d = false;
                 viewer.data().set_vertices(V);
-                viewer.data().compute_normals();
+                //viewer.data().compute_normals();
                 viewer.core().align_camera_center(V, F);
             }
             ImGui::SameLine();
@@ -341,20 +267,6 @@ int main(int argc, char* argv[])
             ImGui::Text("Distorsion por Estiramiento (L2, ideal=1.0)");
             ImGui::BulletText("Media ponderada: %.3f", avg_l2);
             ImGui::BulletText("Maximo error: %.3f", max_l2);
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-            // Botón opcional para guardar PLY
-            if (ImGui::Button("Guardar Malla Plana (.ply)", ImVec2(-1, 0))) {
-                if (V_uv.rows() > 0) {
-                    Eigen::MatrixXd V_flat = Eigen::MatrixXd::Zero(V_uv.rows(), 3);
-                    V_flat.leftCols(2) = V_uv;
-                    igl::writePLY("parametrizacion_exportada.ply", V_flat, F);
-                    std::cout << "Malla 2D guardada exitosamente." << std::endl;
-                }
-                else {
-                    std::cerr << "Debe calcular una parametrización primero." << std::endl;
-                }
-            }
 
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
             ImGui::Text("Configuracion de Renderizado");
@@ -387,9 +299,8 @@ int main(int argc, char* argv[])
             }
         };
 
-    // Calcular una vez por defecto al iniciar
-    compute_parameterization();
-    viewer.data().set_uv(V_uv);
+    
+    viewer.data().set_uv(V_uv, FTC);
     update_colors(viewer);
 
     viewer.launch();
