@@ -8,11 +8,15 @@
 
 #include <Eigen/Dense>
 #include <iostream>
+#include <string>
 
 // Variables globales para el estado de la aplicación
 Eigen::MatrixXd V, V_uv, N;
 Eigen::MatrixXi F, FTC, FN;
 Eigen::MatrixXd Sigmas;
+Eigen::VectorXd metric_values;
+float min_metric_value = 0;
+float max_metric_value = 0;
 
 int current_metric = 1; // 0: Ninguna, 1: MIPS, 2: L2 Stretch, 3: Area
 bool show_2d = false;
@@ -114,6 +118,7 @@ void compute_stats()
         avg_mips = sum_mips / total_area_3d;
         avg_l2 = sum_l2 / total_area_3d;
     }
+
 }
 
 // -------------------------------------------------------------------
@@ -126,7 +131,7 @@ void update_colors(igl::opengl::glfw::Viewer& viewer)
         return;
     }
 
-    Eigen::VectorXd metric_values(F.rows());
+    metric_values.resize(F.rows());
     for (int i = 0; i < F.rows(); ++i) {
         double s1 = Sigmas(i, 0);
         double s2 = Sigmas(i, 1);
@@ -151,6 +156,8 @@ void update_colors(igl::opengl::glfw::Viewer& viewer)
     else {
         igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, (double)metric_min, (double)metric_max, C);
     }
+    min_metric_value = metric_values.minCoeff();
+    max_metric_value = metric_values.maxCoeff();
     viewer.data().set_colors(C);
 }
 //imprimir matrices
@@ -181,7 +188,7 @@ int main(int argc, char* argv[])
         std::cerr << "Error al cargar la malla." << std::endl;
         return 1;
     }
-	print_mat(V_uv);
+	
     // CORRECCIÓN 2: ¡Llamar a las funciones de cálculo!
     compute_sigmas();
     compute_stats();
@@ -205,8 +212,8 @@ int main(int argc, char* argv[])
             ImGui::Text("Analisis de Parametrizacion");
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-            ImGui::Text("Análisis de Distorsión");
-            if (ImGui::Combo("Métrica", &current_metric, "Ninguna (Color sólido)\0MIPS (Conformal)\0L2 Stretch (Distancias)\0Cambio de Area\0")) {
+            ImGui::Text("Analisis de Distorsion");
+            if (ImGui::Combo("Metrica", &current_metric, "Ninguna (Color sólido)\0MIPS (Conformal)\0L2 Stretch (Distancias)\0Cambio de Area\0")) {
                 update_colors(viewer);
             }
 
@@ -270,6 +277,12 @@ int main(int argc, char* argv[])
             ImGui::BulletText("Media ponderada: %.3f", avg_l2);
             ImGui::BulletText("Maximo error: %.3f", max_l2);
 
+            ImGui::Spacing();
+            ImGui::Text("Valores min y max de la metrica seleccionada");
+            ImGui::BulletText(std::to_string(min_metric_value).c_str());
+			ImGui::BulletText(std::to_string(max_metric_value).c_str());
+
+
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
             ImGui::Text("Configuracion de Renderizado");
 
@@ -292,9 +305,12 @@ int main(int argc, char* argv[])
             if (ImGui::ColorEdit3("Color de Fondo", bg_color)) {
                 viewer.core().background_color << bg_color[0], bg_color[1], bg_color[2], 1.0f;
             }
+
         };
 
     update_colors(viewer);
+	std::cout << "max: " << metric_values.maxCoeff() << std::endl;
+	std::cout << "min: " << metric_values.minCoeff() << std::endl;
     viewer.launch();
     return 0;
 }
