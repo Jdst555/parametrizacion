@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(Harmonic)
+project(param)
 
 # --- NEW: Default to Release mode if not specified ---
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

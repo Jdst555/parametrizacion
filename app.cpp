@@ -236,7 +236,7 @@ int main(int argc, char* argv[])
                 viewer.data().clear();
                 viewer.data().set_mesh(V, F);
                 viewer.data().set_uv(V_uv, FTC);
-                viewer.data().show_lines = false;
+                viewer.data().show_lines = true;
                 update_colors(viewer);
                 viewer.core().align_camera_center(V, F);
             }
@@ -309,8 +309,6 @@ int main(int argc, char* argv[])
         };
 
     update_colors(viewer);
-	std::cout << "max: " << metric_values.maxCoeff() << std::endl;
-	std::cout << "min: " << metric_values.minCoeff() << std::endl;
     viewer.launch();
     return 0;
 }
