@@ -5,6 +5,7 @@
 #include <igl/opengl/glfw/imgui/ImGuiPlugin.h>
 #include <igl/opengl/glfw/imgui/ImGuiMenu.h>
 #include <igl/opengl/glfw/imgui/ImGuiHelpers.h>
+#include <igl/stb/write_image.h>
 
 #include <Eigen/Dense>
 #include <iostream>
@@ -256,6 +257,49 @@ int main(int argc, char* argv[])
                 }
             }
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+            ImGui::Text("Exportar");
+
+            if (ImGui::Button("Guardar PNG (Alta Resolucion)")) {
+                if (V_uv.rows() > 0) {
+                    // 1. Prepare the 2D flat vertices
+                    Eigen::MatrixXd V_flat = Eigen::MatrixXd::Zero(V_uv.rows(), 3);
+                    V_flat.leftCols(2) = V_uv;
+
+                    // 2. Set the geometry to the 2D map and apply the heatmap colors
+                    viewer.data().clear();
+                    viewer.data().set_mesh(V_flat, FTC);
+                    viewer.data().show_lines = true;
+                    update_colors(viewer);
+
+                    // 3. FORCE PERFECT 2D CAMERA SETTINGS
+                    viewer.core().align_camera_center(V_flat, FTC);
+                    viewer.core().orthographic = true;
+                    viewer.core().trackball_angle = Eigen::Quaternionf::Identity(); // Perfect top-down
+                    viewer.core().camera_zoom = 0.85f; // Zoom out slightly to leave a nice margin
+
+                    // 4. Allocate memory for a High-Res Image (e.g., 2048 x 2048 pixels)
+                    // By specifying a size here, it ignores your tiny window size and renders in 4K!
+                    int img_size = 2048;
+                    Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> R(img_size, img_size);
+                    Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> G(img_size, img_size);
+                    Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> B(img_size, img_size);
+                    Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> A(img_size, img_size);
+
+                    // 5. Render the scene off-screen to the matrices!
+                    // We pass 'true' as the second argument so the viewer recalculates the matrices 
+                    // to apply the orthographic settings we just forced.
+                    viewer.core().draw_buffer(viewer.data(), true, R, G, B, A);
+
+                    // 6. Write out the PNG file to your project folder
+                    igl::stb::write_image("parametrizacion_2d.png", R, G, B, A);
+
+                    // 7. Sync the UI so the user knows they are now looking at the 2D view
+                    show_2d = true;
+
+                    std::cout << "¡Imagen guardada exitosamente como parametrizacion_2d.png!" << std::endl;
+                }
+            }
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
             ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Resultados Numericos");
             ImGui::Text("Tiempo de CPU: %.4f s", compute_time);
@@ -310,5 +354,6 @@ int main(int argc, char* argv[])
 
     update_colors(viewer);
     viewer.launch();
+    
     return 0;
 }

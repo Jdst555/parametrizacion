@@ -16,6 +16,7 @@ add_subdirectory(${LIBIGL_SOURCE_DIR} libigl)
 # 3. TELL LIBIGL TO BUILD THE VIEWER (The new v2.4+ way)
 igl_include(glfw)
 igl_include(imgui)
+igl_include(stb)
 
 # 4. Add your executable
 add_executable(${PROJECT_NAME} app.cpp)
@@ -35,4 +36,4 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 )
 
 # 7. Link against igl::core and the newly renamed igl::glfw target
-target_link_libraries(${PROJECT_NAME} PRIVATE igl::core igl::glfw igl::imgui)
+target_link_libraries(${PROJECT_NAME} PRIVATE igl::core igl::glfw igl::imgui igl::stb)
