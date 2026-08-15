@@ -10,6 +10,7 @@
 #include <Eigen/Dense>
 #include <iostream>
 #include <string>
+#include <vector>
 
 // Variables globales para el estado de la aplicación
 Eigen::MatrixXd V, V_uv, N;
@@ -32,6 +33,12 @@ double compute_time = 0.0;
 int num_flips = 0;
 double avg_mips = 0.0, max_mips = 0.0;
 double avg_l2 = 0.0, max_l2 = 0.0;
+
+// PARA LOS HISTOGRAMAS
+const int NUM_BINS = 50; // Cantidad de barras en el histograma
+std::vector<float> hist_mips(NUM_BINS, 0.0f);
+std::vector<float> hist_l2(NUM_BINS, 0.0f);
+std::vector<float> hist_area(NUM_BINS, 0.0f);
 
 // -------------------------------------------------------------------
 // 1. CÁLCULO DE VALORES SINGULARES
@@ -81,6 +88,17 @@ void compute_stats()
     double sum_mips = 0.0, sum_l2 = 0.0;
     double total_area_3d = 0.0;
 
+    // Limpiar los histogramas anteriores
+    std::fill(hist_mips.begin(), hist_mips.end(), 0.0f);
+    std::fill(hist_l2.begin(), hist_l2.end(), 0.0f);
+    std::fill(hist_area.begin(), hist_area.end(), 0.0f);
+
+    // Definir los rangos para los histogramas (ajustar maximos)
+    double min_mips = 2.0, max_mips_hist = 5.0; // MIPS ideal es 2.0
+    double min_l2 = 1.0, max_l2_hist = 3.0;     // L2 ideal es 1.0
+    double min_area = 0.0, max_area_hist = 2.0; // Area ideal es 1.0
+
+
     for (int i = 0; i < F.rows(); ++i)
     {
         Eigen::Vector3d p1 = V.row(F(i, 0));
@@ -109,9 +127,22 @@ void compute_stats()
             max_mips = std::max(max_mips, mips);
             sum_mips += mips * area_3d;
 
+            int bin_mips = (int)(((mips - min_mips) / (max_mips_hist - min_mips)) * NUM_BINS);
+            bin_mips = std::max(0, std::min(NUM_BINS - 1, bin_mips));
+            hist_mips[bin_mips] += (float)area_3d; // Ponderado por área!
+
             double l2 = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
             max_l2 = std::max(max_l2, l2);
             sum_l2 += l2 * area_3d;
+
+            int bin_l2 = (int)(((l2 - min_l2) / (max_l2_hist - min_l2)) * NUM_BINS);
+            bin_l2 = std::max(0, std::min(NUM_BINS - 1, bin_l2));
+            hist_l2[bin_l2] += (float)area_3d;
+
+            double area_metric = s1 * s2;
+            int bin_a = (int)(((area_metric - min_area) / (max_area_hist - min_area)) * NUM_BINS);
+            bin_a = std::max(0, std::min(NUM_BINS - 1, bin_a));
+            hist_area[bin_a] += (float)area_3d;
         }
     }
 
@@ -326,6 +357,26 @@ int main(int argc, char* argv[])
             ImGui::BulletText(std::to_string(min_metric_value).c_str());
 			ImGui::BulletText(std::to_string(max_metric_value).c_str());
 
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Distribucion de Distorsion (Por Area)");
+
+            // Elegir qué histograma mostrar según la métrica actual seleccionada por el usuario
+            if (current_metric == 1) {
+                ImGui::Text("Histograma: MIPS (Ideal = 2.0)");
+                ImGui::PlotHistogram("##mips", hist_mips.data(), NUM_BINS, 0, NULL, 0.0f, FLT_MAX, ImVec2(0, 80));
+            }
+            else if (current_metric == 2) {
+                ImGui::Text("Histograma: L2 Stretch (Ideal = 1.0)");
+                ImGui::PlotHistogram("##l2", hist_l2.data(), NUM_BINS, 0, NULL, 0.0f, FLT_MAX, ImVec2(0, 80));
+            }
+            else if (current_metric == 3) {
+                ImGui::Text("Histograma: Cambio de Area (Ideal = 1.0)");
+                ImGui::PlotHistogram("##area", hist_area.data(), NUM_BINS, 0, NULL, 0.0f, FLT_MAX, ImVec2(0, 80));
+            }
+            else {
+                ImGui::TextDisabled("Seleccione una metrica arriba para ver el histograma.");
+            }
+
 
             ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
             ImGui::Text("Configuracion de Renderizado");
@@ -351,7 +402,6 @@ int main(int argc, char* argv[])
             }
 
         };
-
     update_colors(viewer);
     viewer.launch();
     
