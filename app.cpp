@@ -31,7 +31,7 @@ float metric_max = 5.0f;
 // Variables para las estadísticas
 double compute_time = 0.0;
 int num_flips = 0;
-double avg_mips = 0.0, max_mips = 0.0;
+double avg_mips = 0.0, max_mips = 0.0, max_area = 0.0;
 double avg_l2 = 0.0, max_l2 = 0.0;
 
 // PARA LOS HISTOGRAMAS
@@ -39,6 +39,9 @@ const int NUM_BINS = 50; // Cantidad de barras en el histograma
 std::vector<float> hist_mips(NUM_BINS, 0.0f);
 std::vector<float> hist_l2(NUM_BINS, 0.0f);
 std::vector<float> hist_area(NUM_BINS, 0.0f);
+double mips_range = 0.0;  //MIPS range
+double l2_range = 0.0;     // L2 range
+double area_range = 0.0; // Area range
 
 // -------------------------------------------------------------------
 // 1. CÁLCULO DE VALORES SINGULARES
@@ -81,12 +84,61 @@ void compute_sigmas()
 // -------------------------------------------------------------------
 // CÁLCULO DE ESTADÍSTICAS GLOBALES
 // -------------------------------------------------------------------
+void calc_minmax() 
+{
+    double min[3];
+    double max[3];
+    double area_3d, total_area_3d, mips, l2, area;
+    min[0] = 2.0; //mips
+	min[1] = 1.0; //l2
+	min[2] = 0.0; //area
+    for (int i = 0; i < F.rows(); ++i) 
+    {
+        Eigen::Vector3d p1 = V.row(F(i, 0));
+        Eigen::Vector3d p2 = V.row(F(i, 1));
+        Eigen::Vector3d p3 = V.row(F(i, 2));
+        area_3d = 0.5 * ((p2 - p1).cross(p3 - p1)).norm();
+        total_area_3d += area_3d;
+
+        // ¡USAR FTC PARA UVS!
+        int uv1 = FTC(i, 0), uv2 = FTC(i, 1), uv3 = FTC(i, 2);
+        Eigen::Vector2d u1 = V_uv.row(uv1).head<2>();
+        Eigen::Vector2d u2 = V_uv.row(uv2).head<2>();
+        Eigen::Vector2d u3 = V_uv.row(uv3).head<2>();
+
+        double area_2d = 0.5 * ((u2.x() - u1.x()) * (u3.y() - u1.y()) - (u2.y() - u1.y()) * (u3.x() - u1.x()));
+
+        double s1 = Sigmas(i, 0);
+        double s2 = Sigmas(i, 1);
+
+        if (s1 > 0 && s2 > 0) {
+            //MIPS
+            mips = (s1 / s2) + (s2 / s1);
+            max[0] = std::max(max[0], mips);
+
+			//L2
+            double l2 = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
+            max[1] = std::max(max[1], l2);
+
+            //AREA
+			double area = s1 * s2;
+			max[2] = std::max(max[2], area);
+        }
+    }
+
+	mips_range = max[0] - min[0];  //MIPS range
+    l2_range = max[1] - min[1];     // L2 range
+    area_range = max[2] - min[2]; // Area range
+
+}
 void compute_stats()
 {
     num_flips = 0;
-    max_mips = 0.0; max_l2 = 0.0;
+    max_mips = 0.0; max_l2 = 0.0, max_area = 0.0; 
     double sum_mips = 0.0, sum_l2 = 0.0;
     double total_area_3d = 0.0;
+
+    double mips = 0.0, area_3d;
 
     // Limpiar los histogramas anteriores
     std::fill(hist_mips.begin(), hist_mips.end(), 0.0f);
@@ -104,7 +156,7 @@ void compute_stats()
         Eigen::Vector3d p1 = V.row(F(i, 0));
         Eigen::Vector3d p2 = V.row(F(i, 1));
         Eigen::Vector3d p3 = V.row(F(i, 2));
-        double area_3d = 0.5 * ((p2 - p1).cross(p3 - p1)).norm();
+        area_3d = 0.5 * ((p2 - p1).cross(p3 - p1)).norm();
         total_area_3d += area_3d;
 
         // ¡USAR FTC PARA UVS!
@@ -123,25 +175,25 @@ void compute_stats()
         double s2 = Sigmas(i, 1);
 
         if (s1 > 0 && s2 > 0) {
-            double mips = (s1 / s2) + (s2 / s1);
+            //MIPS
+            mips = (s1 / s2) + (s2 / s1);
             max_mips = std::max(max_mips, mips);
             sum_mips += mips * area_3d;
 
-            int bin_mips = (int)(((mips - min_mips) / (max_mips_hist - min_mips)) * NUM_BINS);
-            bin_mips = std::max(0, std::min(NUM_BINS - 1, bin_mips));
+            int bin_mips = (int)(((mips - min_mips) / mips_range) * NUM_BINS);
             hist_mips[bin_mips] += (float)area_3d; // Ponderado por área!
 
+            //L2
             double l2 = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
             max_l2 = std::max(max_l2, l2);
             sum_l2 += l2 * area_3d;
 
-            int bin_l2 = (int)(((l2 - min_l2) / (max_l2_hist - min_l2)) * NUM_BINS);
-            bin_l2 = std::max(0, std::min(NUM_BINS - 1, bin_l2));
+            int bin_l2 = (int)(((l2 - min_l2) / l2_range) * NUM_BINS);
             hist_l2[bin_l2] += (float)area_3d;
 
+            //AREA
             double area_metric = s1 * s2;
-            int bin_a = (int)(((area_metric - min_area) / (max_area_hist - min_area)) * NUM_BINS);
-            bin_a = std::max(0, std::min(NUM_BINS - 1, bin_a));
+            int bin_a = (int)(((area_metric - min_area) / area_range) * NUM_BINS);
             hist_area[bin_a] += (float)area_3d;
         }
     }
@@ -215,14 +267,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // CORRECCIÓN 1: Leer desde argv[1], no argv[2]
     if (!igl::readOBJ(argv[1], V, V_uv, N, F, FTC, FN)) {
         std::cerr << "Error al cargar la malla." << std::endl;
         return 1;
     }
 	
-    // CORRECCIÓN 2: ¡Llamar a las funciones de cálculo!
     compute_sigmas();
+	calc_minmax();
     compute_stats();
 
     igl::opengl::glfw::Viewer viewer;
@@ -280,7 +331,6 @@ int main(int argc, char* argv[])
                     V_flat.leftCols(2) = V_uv;
 
                     viewer.data().clear();
-                    // CORRECCIÓN 4: Renderizar usando FTC para V_flat
                     viewer.data().set_mesh(V_flat, FTC);
                     viewer.data().show_lines = false;
                     update_colors(viewer);
