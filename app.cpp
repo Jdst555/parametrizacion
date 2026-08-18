@@ -16,9 +16,9 @@
 Eigen::MatrixXd V, V_uv, N;
 Eigen::MatrixXi F, FTC, FN;
 Eigen::MatrixXd Sigmas;
-Eigen::VectorXd metric_values;
-float min_metric_value = 0;
-float max_metric_value = 0;
+Eigen::VectorXd mips_values, l2_values, area_values;
+float min_metric_value = 0.0;
+float max_metric_value = 0.0;
 
 int current_metric = 1; // 0: Ninguna, 1: MIPS, 2: L2 Stretch, 3: Area
 bool show_2d = false;
@@ -81,128 +81,138 @@ void compute_sigmas()
     }
 }
 
-// -------------------------------------------------------------------
-// CÁLCULO DE ESTADÍSTICAS GLOBALES
-// -------------------------------------------------------------------
-void calc_minmax() 
-{
-    double min[3];
-    double max[3];
-    double area_3d, total_area_3d, mips, l2, area;
-    min[0] = 2.0; //mips
-	min[1] = 1.0; //l2
-	min[2] = 0.0; //area
-    for (int i = 0; i < F.rows(); ++i) 
-    {
-        Eigen::Vector3d p1 = V.row(F(i, 0));
-        Eigen::Vector3d p2 = V.row(F(i, 1));
-        Eigen::Vector3d p3 = V.row(F(i, 2));
-        area_3d = 0.5 * ((p2 - p1).cross(p3 - p1)).norm();
-        total_area_3d += area_3d;
 
-        // ¡USAR FTC PARA UVS!
-        int uv1 = FTC(i, 0), uv2 = FTC(i, 1), uv3 = FTC(i, 2);
-        Eigen::Vector2d u1 = V_uv.row(uv1).head<2>();
-        Eigen::Vector2d u2 = V_uv.row(uv2).head<2>();
-        Eigen::Vector2d u3 = V_uv.row(uv3).head<2>();
-
-        double area_2d = 0.5 * ((u2.x() - u1.x()) * (u3.y() - u1.y()) - (u2.y() - u1.y()) * (u3.x() - u1.x()));
-
-        double s1 = Sigmas(i, 0);
-        double s2 = Sigmas(i, 1);
-
-        if (s1 > 0 && s2 > 0) {
-            //MIPS
-            mips = (s1 / s2) + (s2 / s1);
-            max[0] = std::max(max[0], mips);
-
-			//L2
-            double l2 = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
-            max[1] = std::max(max[1], l2);
-
-            //AREA
-			double area = s1 * s2;
-			max[2] = std::max(max[2], area);
-        }
-    }
-
-	mips_range = max[0] - min[0];  //MIPS range
-    l2_range = max[1] - min[1];     // L2 range
-    area_range = max[2] - min[2]; // Area range
-
-}
+// ===================================================================
+// CÁLCULO DE ESTADÍSTICAS GLOBALES, RANGOS E HISTOGRAMAS
+// ===================================================================
 void compute_stats()
 {
     num_flips = 0;
-    max_mips = 0.0; max_l2 = 0.0, max_area = 0.0; 
-    double sum_mips = 0.0, sum_l2 = 0.0;
-    double total_area_3d = 0.0;
+    double sum_mips = 0.0, sum_l2 = 0.0, total_area_3d = 0.0;
 
-    double mips = 0.0, area_3d;
+    // 1. INICIALIZAR VECTORES A SUS VALORES "IDEALES" (Para que los inválidos no tengan basura)
+    mips_values.setConstant(F.rows(), 2.0); // MIPS ideal
+    l2_values.setConstant(F.rows(), 1.0);   // L2 ideal
+    area_values.setConstant(F.rows(), 1.0); // Area ideal
 
-    // Limpiar los histogramas anteriores
-    std::fill(hist_mips.begin(), hist_mips.end(), 0.0f);
-    std::fill(hist_l2.begin(), hist_l2.end(), 0.0f);
-    std::fill(hist_area.begin(), hist_area.end(), 0.0f);
+    // Inicializar los globales a los mínimos posibles para empezar a buscar el máximo
+    max_mips = 2.0; max_l2 = 1.0; max_area = 0.0;
+    double min_mips = 2.0, min_l2 = 1.0, min_area = std::numeric_limits<double>::max();
 
-    // Definir los rangos para los histogramas (ajustar maximos)
-    double min_mips = 2.0, max_mips_hist = 5.0; // MIPS ideal es 2.0
-    double min_l2 = 1.0, max_l2_hist = 3.0;     // L2 ideal es 1.0
-    double min_area = 0.0, max_area_hist = 2.0; // Area ideal es 1.0
-
-
+    // ==========================================
+    // PASO 1: Calcular métricas por cara
+    // ==========================================
     for (int i = 0; i < F.rows(); ++i)
     {
+        // Área 3D
         Eigen::Vector3d p1 = V.row(F(i, 0));
         Eigen::Vector3d p2 = V.row(F(i, 1));
         Eigen::Vector3d p3 = V.row(F(i, 2));
-        area_3d = 0.5 * ((p2 - p1).cross(p3 - p1)).norm();
+        double area_3d = 0.5 * ((p2 - p1).cross(p3 - p1)).norm();
         total_area_3d += area_3d;
 
-        // ¡USAR FTC PARA UVS!
+        // Área 2D (Para Flips)
         int uv1 = FTC(i, 0), uv2 = FTC(i, 1), uv3 = FTC(i, 2);
-        Eigen::Vector2d u1 = V_uv.row(uv1).head<2>();
-        Eigen::Vector2d u2 = V_uv.row(uv2).head<2>();
-        Eigen::Vector2d u3 = V_uv.row(uv3).head<2>();
-
+        Eigen::Vector2d u1 = V_uv.row(uv1).head<2>(), u2 = V_uv.row(uv2).head<2>(), u3 = V_uv.row(uv3).head<2>();
         double area_2d = 0.5 * ((u2.x() - u1.x()) * (u3.y() - u1.y()) - (u2.y() - u1.y()) * (u3.x() - u1.x()));
 
-        if (area_2d <= 0.0) {
-            num_flips++;
-        }
+        if (area_2d <= 0.0) num_flips++;
 
         double s1 = Sigmas(i, 0);
         double s2 = Sigmas(i, 1);
 
+        // Si el triángulo es válido, calcular métricas reales
         if (s1 > 0 && s2 > 0) {
-            //MIPS
-            mips = (s1 / s2) + (s2 / s1);
+            // MIPS
+            double mips = (s1 / s2) + (s2 / s1);
+            mips_values(i) = mips;
             max_mips = std::max(max_mips, mips);
             sum_mips += mips * area_3d;
 
-            int bin_mips = (int)(((mips - min_mips) / mips_range) * NUM_BINS);
-            hist_mips[bin_mips] += (float)area_3d; // Ponderado por área!
-
-            //L2
+            // L2 Stretch
             double l2 = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
+            l2_values(i) = l2;
             max_l2 = std::max(max_l2, l2);
             sum_l2 += l2 * area_3d;
 
-            int bin_l2 = (int)(((l2 - min_l2) / l2_range) * NUM_BINS);
-            hist_l2[bin_l2] += (float)area_3d;
-
-            //AREA
-            double area_metric = s1 * s2;
-            int bin_a = (int)(((area_metric - min_area) / area_range) * NUM_BINS);
-            hist_area[bin_a] += (float)area_3d;
+            // Cambio de Área
+            double area_val = s1 * s2;
+            area_values(i) = area_val;
+            max_area = std::max(max_area, area_val);
+            min_area = std::min(min_area, area_val);
         }
     }
 
+    // Promedios Ponderados
     if (total_area_3d > 0) {
         avg_mips = sum_mips / total_area_3d;
         avg_l2 = sum_l2 / total_area_3d;
     }
 
+    // ==========================================
+    // PASO 2: Generar Rangos e Histogramas
+    // ==========================================
+    if (min_area == std::numeric_limits<double>::max()) min_area = 0.0; // Fallback de seguridad
+    mips_range = max_mips - min_mips;
+    l2_range = max_l2 - min_l2;
+    area_range = max_area - min_area;
+
+    std::fill(hist_mips.begin(), hist_mips.end(), 0.0f);
+    std::fill(hist_l2.begin(), hist_l2.end(), 0.0f);
+    std::fill(hist_area.begin(), hist_area.end(), 0.0f);
+
+    for (int i = 0; i < F.rows(); ++i)
+    {
+        // Solo procesar triángulos válidos (que no colapsaron a área 0 en 2D)
+        if (Sigmas(i, 0) > 0 && Sigmas(i, 1) > 0)
+        {
+            // --------------------------------------------------------
+            // 1. Calcular el Área 3D del triángulo
+            // --------------------------------------------------------
+            // Extraer los vértices 3D explícitamente (ESTO ARREGLA EL ERROR DEL COMPILADOR)
+            Eigen::Vector3d p1 = V.row(F(i, 0));
+            Eigen::Vector3d p2 = V.row(F(i, 1));
+            Eigen::Vector3d p3 = V.row(F(i, 2));
+
+            Eigen::Vector3d edge1 = p2 - p1;
+            Eigen::Vector3d edge2 = p3 - p1;
+
+            double area_3d = 0.5 * (edge1.cross(edge2)).norm();
+
+            // --------------------------------------------------------
+            // 2. Llenar el Histograma MIPS
+            // --------------------------------------------------------
+            if (mips_range > 0) {
+                double normalized_val = (mips_values(i) - min_mips) / mips_range;
+                int bin = static_cast<int>(normalized_val * NUM_BINS);
+                bin = std::max(0, std::min(NUM_BINS - 1, bin)); // Asegurar que no se salga del array
+
+                hist_mips[bin] += static_cast<float>(area_3d);
+            }
+
+            // --------------------------------------------------------
+            // 3. Llenar el Histograma L2 Stretch
+            // --------------------------------------------------------
+            if (l2_range > 0) {
+                double normalized_val = (l2_values(i) - min_l2) / l2_range;
+                int bin = static_cast<int>(normalized_val * NUM_BINS);
+                bin = std::max(0, std::min(NUM_BINS - 1, bin));
+
+                hist_l2[bin] += static_cast<float>(area_3d);
+            }
+
+            // --------------------------------------------------------
+            // 4. Llenar el Histograma Cambio de Área
+            // --------------------------------------------------------
+            if (area_range > 0) {
+                double normalized_val = (area_values(i) - min_area) / area_range;
+                int bin = static_cast<int>(normalized_val * NUM_BINS);
+                bin = std::max(0, std::min(NUM_BINS - 1, bin));
+
+                hist_area[bin] += static_cast<float>(area_3d);
+            }
+        }
+    }
 }
 
 // -------------------------------------------------------------------
@@ -214,40 +224,38 @@ void update_colors(igl::opengl::glfw::Viewer& viewer)
         viewer.data().set_colors(Eigen::RowVector3d(0.8, 0.8, 0.8));
         return;
     }
-
-    metric_values.resize(F.rows());
-    for (int i = 0; i < F.rows(); ++i) {
-        double s1 = Sigmas(i, 0);
-        double s2 = Sigmas(i, 1);
-
-        if (s1 == 0 && s2 == 0) { metric_values(i) = 0; continue; }
-
-        if (current_metric == 1) {
-            metric_values(i) = (s1 / s2) + (s2 / s1);
-        }
-        else if (current_metric == 2) {
-            metric_values(i) = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
-        }
-        else if (current_metric == 3) {
-            metric_values(i) = s1 * s2;
-        }
+    Eigen::VectorXd* metric_values_ptr = nullptr;
+    if (current_metric == 1) {
+        metric_values_ptr = &mips_values;
     }
+    else if (current_metric == 2) {
+        metric_values_ptr = &l2_values;
+    }
+    else if (current_metric == 3) {
+        metric_values_ptr = &area_values;
+    }
+    
 
     Eigen::MatrixXd C;
-    if (auto_scale) {
-        igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, true, C);
+    if (metric_values_ptr) 
+    {
+        if (auto_scale) {
+            igl::colormap(igl::COLOR_MAP_TYPE_TURBO, *metric_values_ptr, true, C);
+        }
+        else {
+            igl::colormap(igl::COLOR_MAP_TYPE_TURBO, *metric_values_ptr, (double)metric_min, (double)metric_max, C);
+        }
+
+        min_metric_value = (*metric_values_ptr).minCoeff();
+        max_metric_value = (*metric_values_ptr).maxCoeff();
     }
-    else {
-        igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, (double)metric_min, (double)metric_max, C);
-    }
-    min_metric_value = metric_values.minCoeff();
-    max_metric_value = metric_values.maxCoeff();
+    else { std::cout << "metric_values_ptr is null!" << "\n"; }
+    
     viewer.data().set_colors(C);
 }
 //imprimir matrices
 template <typename Derived>
-void print_mat(const Eigen::MatrixBase<Derived>& mat,
-    std::ostream& os = std::cout)
+void print_mat(const Eigen::MatrixBase<Derived>& mat, std::ostream& os = std::cout)
 {
     for (int i = 0; i < mat.rows(); ++i) {
         for (int j = 0; j < mat.cols(); ++j) {
@@ -273,7 +281,6 @@ int main(int argc, char* argv[])
     }
 	
     compute_sigmas();
-	calc_minmax();
     compute_stats();
 
     igl::opengl::glfw::Viewer viewer;
@@ -298,6 +305,7 @@ int main(int argc, char* argv[])
             ImGui::Text("Analisis de Distorsion");
             if (ImGui::Combo("Metrica", &current_metric, "Ninguna (Color sólido)\0MIPS (Conformal)\0L2 Stretch (Distancias)\0Cambio de Area\0")) {
                 update_colors(viewer);
+                
             }
 
             if (current_metric != 0) {
