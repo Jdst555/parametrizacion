@@ -96,8 +96,11 @@ void compute_stats()
     area_values.setConstant(F.rows(), 1.0); // Area ideal
 
     // Inicializar los globales a los mínimos posibles para empezar a buscar el máximo
-    max_mips = 2.0; max_l2 = 1.0; max_area = 0.0;
-    double min_mips = 2.0, min_l2 = 1.0, min_area = std::numeric_limits<double>::max();
+    max_mips = 0.0; max_l2 = 0.0; max_area = 0.0;
+    
+    double min_mips = std::numeric_limits<double>::max();
+    double min_l2 = std::numeric_limits<double>::max();
+    double min_area = std::numeric_limits<double>::max();
 
     // ==========================================
     // PASO 1: Calcular métricas por cara
@@ -127,18 +130,21 @@ void compute_stats()
             double mips = (s1 / s2) + (s2 / s1);
             mips_values(i) = mips;
             max_mips = std::max(max_mips, mips);
+            min_mips = std::min(min_mips, mips); // <-- NUEVO
             sum_mips += mips * area_3d;
 
             // L2 Stretch
             double l2 = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
             l2_values(i) = l2;
             max_l2 = std::max(max_l2, l2);
+            min_l2 = std::min(min_l2, l2);
             sum_l2 += l2 * area_3d;
 
             // Cambio de Área
             double area_val = s1 * s2;
             area_values(i) = area_val;
             max_area = std::max(max_area, area_val);
+            min_area = std::min(min_area, area_val);
             min_area = std::min(min_area, area_val);
         }
     }
