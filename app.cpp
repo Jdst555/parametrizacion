@@ -145,7 +145,6 @@ void compute_stats()
             area_values(i) = area_val;
             max_area = std::max(max_area, area_val);
             min_area = std::min(min_area, area_val);
-            min_area = std::min(min_area, area_val);
         }
     }
 
@@ -466,6 +465,26 @@ int main(int argc, char* argv[])
             }
 
         };
+        viewer.callback_key_down = [&](igl::opengl::glfw::Viewer& v, unsigned int key, int modifiers) -> bool
+            {
+                if (key == 'R' || key == 'r') {
+                    // Resetear la vista a la cámara inicial
+                    if (show_2d && V_uv.rows() > 0) {
+                        
+
+                        //viewer.core().align_camera_center(V_flat, FTC);
+                        viewer.core().orthographic = true;
+                        viewer.core().trackball_angle = Eigen::Quaternionf::Identity(); // Perfect top-down
+                        viewer.core().camera_zoom = 1.0f; // Zoom out slightly to leave a nice margin
+                    }
+                    else {
+                        viewer.core().align_camera_center(V, F);
+                    }
+                    return true; // Indica que el evento fue manejado
+                }
+                return false; // No manejado, pasar a otros callbacks
+            };
+
     update_colors(viewer);
     viewer.launch();
     
