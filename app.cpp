@@ -1,40 +1,24 @@
-//branch main
 #include <igl/boundary_loop.h>
 #include <igl/harmonic.h>
 #include <igl/lscm.h>
 #include <igl/arap.h>
 #include <igl/map_vertices_to_circle.h>
 #include <igl/read_triangle_mesh.h>
-#include <igl/writePLY.h>
-#include <igl/colormap.h> // Para los mapas de calor
-
-// Cabeceras del visor e ImGui
-#include <igl/opengl/glfw/Viewer.h>
-#include <igl/opengl/glfw/imgui/ImGuiPlugin.h>
-#include <igl/opengl/glfw/imgui/ImGuiMenu.h>
-#include <igl/opengl/glfw/imgui/ImGuiHelpers.h>
+#include <igl/writeOBJ.h> // <-- Cambiado para exportar UVs explícitamente
 
 #include <Eigen/Dense>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <algorithm>
-#include <chrono> // Para medir el tiempo de ejecución
+#include <chrono>
+#include <cmath>
 
 // Variables globales para el estado de la aplicación
-Eigen::MatrixXd V, V_uv;//vértices de la malla 3d y de la parametrización 2d
-Eigen::MatrixXi F;//triángulos
-Eigen::VectorXi bnd;//vértices del borde
+Eigen::MatrixXd V, V_uv; // vértices de la malla 3d y de la parametrización 2d
+Eigen::MatrixXi F;       // triángulos
+Eigen::VectorXi bnd;     // vértices del borde
 Eigen::MatrixXd Sigmas;
-
-int current_method = 1; // 0: Harmonic, 1: LSCM, 2: ARAP
-int current_metric = 1; // 0: Ninguna, 1: MIPS, 2: L2 Stretch, 3: Area
-bool show_2d = false;
-
-// Variables para controlar el mapa de color
-bool auto_scale = true;
-float metric_min = 2.0f;
-float metric_max = 5.0f;
 
 // Variables para las estadísticas
 double compute_time = 0.0;
@@ -75,8 +59,9 @@ void compute_sigmas()
         Sigmas(i, 1) = std::sqrt(std::max(0.0, eigenvalues(0))); // Menor (sigma 2)
     }
 }
+
 // -------------------------------------------------------------------
-// CÁLCULO DE ESTADÍSTICAS GLOBALES
+// 2. CÁLCULO DE ESTADÍSTICAS GLOBALES
 // -------------------------------------------------------------------
 void compute_stats()
 {
@@ -98,6 +83,7 @@ void compute_stats()
         Eigen::Vector2d u1 = V_uv.row(F(i, 0)).head<2>();
         Eigen::Vector2d u2 = V_uv.row(F(i, 1)).head<2>();
         Eigen::Vector2d u3 = V_uv.row(F(i, 2)).head<2>();
+
         // Producto cruzado en 2D
         double area_2d = 0.5 * ((u2.x() - u1.x()) * (u3.y() - u1.y()) - (u2.y() - u1.y()) * (u3.x() - u1.x()));
 
@@ -106,7 +92,7 @@ void compute_stats()
         }
 
         // 3. Obtener valores singulares previamente calculados
-        double s1 = Sigmas(i, 0); // Mayor (L_infinito)
+        double s1 = Sigmas(i, 0); // Mayor
         double s2 = Sigmas(i, 1); // Menor
 
         if (s1 > 0 && s2 > 0) {
@@ -128,53 +114,11 @@ void compute_stats()
         avg_l2 = sum_l2 / total_area_3d;
     }
 }
-// -------------------------------------------------------------------
-// 2. ACTUALIZAR COLORES (HEATMAP)
-// -------------------------------------------------------------------
-void update_colors(igl::opengl::glfw::Viewer& viewer)
-{
-    if (current_metric == 0 || Sigmas.rows() == 0) {
-        viewer.data().set_colors(Eigen::RowVector3d(0.8, 0.8, 0.8)); // Gris por defecto
-        return;
-    }
-
-    Eigen::VectorXd metric_values(F.rows());
-    for (int i = 0; i < F.rows(); ++i) {
-        double s1 = Sigmas(i, 0);
-        double s2 = Sigmas(i, 1);
-
-        if (s1 == 0 && s2 == 0) { metric_values(i) = 0; continue; }
-
-        if (current_metric == 1) { // MIPS (Conformal)
-            metric_values(i) = (s1 / s2) + (s2 / s1);
-        }
-        else if (current_metric == 2) { // L2 Stretch
-            metric_values(i) = std::sqrt((s1 * s1 + s2 * s2) / 2.0);
-        }
-        else if (current_metric == 3) { // Area
-            metric_values(i) = s1 * s2;
-        }
-    }
-
-    // Mapear los valores a una escala de color jet
-    Eigen::MatrixXd C;
-
-    if (auto_scale) {
-        // Modo por defecto: usa el min y max reales de toda la malla
-        igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, true, C);
-    }
-    else {
-        // Modo manual: clampeamos los colores entre nuestros valores
-        igl::colormap(igl::COLOR_MAP_TYPE_TURBO, metric_values, (double)metric_min, (double)metric_max, C);
-    }
-
-    viewer.data().set_colors(C);
-}
 
 // -------------------------------------------------------------------
 // 3. EJECUCIÓN DE LOS MÉTODOS DE PARAMETRIZACIÓN
 // -------------------------------------------------------------------
-void compute_parameterization()
+void compute_parameterization(int method)
 {
     if (bnd.size() == 0) {
         std::cerr << "Error: La malla no tiene bordes." << std::endl;
@@ -184,12 +128,12 @@ void compute_parameterization()
     // --- INICIO CRONÓMETRO ---
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    if (current_method == 0) { // HARMONIC
+    if (method == 0) { // HARMONIC
         Eigen::MatrixXd bnd_uv;
         igl::map_vertices_to_circle(V, bnd, bnd_uv);
         igl::harmonic(V, F, bnd, bnd_uv, 1, V_uv);
     }
-    else if (current_method == 1) { // LSCM
+    else if (method == 1) { // LSCM
         Eigen::VectorXi b(2, 1);
         b(0) = bnd(0);
         b(1) = bnd(bnd.size() / 2);
@@ -197,7 +141,7 @@ void compute_parameterization()
         bc << 0, 0, 1, 0;
         igl::lscm(V, F, b, bc, V_uv);
     }
-    else if (current_method == 2) { // ARAP
+    else if (method == 2) { // ARAP
         Eigen::VectorXi b(2, 1);
         b(0) = bnd(0); b(1) = bnd(bnd.size() / 2);
         Eigen::MatrixXd bc(2, 2); bc << 0, 0, 1, 0;
@@ -212,187 +156,88 @@ void compute_parameterization()
         V_uv = V_uv_initial;
         igl::arap_solve(bc, arap_data, V_uv);
     }
+
     // --- FIN CRONÓMETRO ---
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end_time - start_time;
     compute_time = diff.count();
 
-    // Actualizamos valores singulares y luego las estadísticas globales
+    // Calculamos valores singulares y estadísticas globales
     compute_sigmas();
-    compute_stats(); // <--- Llmamos a la nueva función
-    
+    compute_stats();
 }
 
 // -------------------------------------------------------------------
-// MAIN
+// MAIN (CLI sin interfaz gráfica)
 // -------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    if (argc < 2) {
-        std::cerr << "Uso: " << argv[0] << " <ruta_malla.off/obj/ply>" << std::endl;
+    if (argc < 4) {
+        std::cerr << "Uso: " << argv[0] << " <input_malla.obj> <metodo> <output_malla.obj>" << std::endl;
+        std::cerr << "  Metodos disponibles:" << std::endl;
+        std::cerr << "    0 = Harmonic (Tutte)" << std::endl;
+        std::cerr << "    1 = LSCM" << std::endl;
+        std::cerr << "    2 = ARAP" << std::endl;
+        return 1;
+    }
+
+    std::string input_file = argv[1];
+    int method = std::stoi(argv[2]);
+    std::string output_file = argv[3];
+
+    if (method < 0 || method > 2) {
+        std::cerr << "Error: Metodo no valido. Seleccione 0, 1 o 2." << std::endl;
         return 1;
     }
 
     // 1. Cargar la malla
-    if (!igl::read_triangle_mesh(argv[1], V, F)) {
-        std::cerr << "Error al cargar la malla." << std::endl;
+    if (!igl::read_triangle_mesh(input_file, V, F)) {
+        std::cerr << "Error al cargar la malla de entrada: " << input_file << std::endl;
         return 1;
     }
 
     // 2. Extraer bordes
     igl::boundary_loop(F, bnd);
+    if (bnd.size() == 0) {
+        std::cerr << "Error: La malla de entrada no tiene bordes abiertos (es cerrada o hermetica)." << std::endl;
+        return 1;
+    }
 
-    // Configurar el visor de libigl
-    igl::opengl::glfw::Viewer viewer;
-    viewer.data().set_mesh(V, F);
-    viewer.data().show_lines = false;
-    viewer.core().lighting_factor = 0.0;
+    // 3. Ejecutar algoritmo
+    std::cout << "Calculando parametrizacion..." << std::endl;
+    compute_parameterization(method);
 
-    // Valores por defecto mejorados para el visor
-    viewer.core().background_color << 0.8f, 0.8f, 0.8f, 1.0f; // Fondo gris claro (no tan negro)
-    viewer.core().light_position << 0.0f, 5.0f, 10.0f;        // Luz al frente y un poco arriba
-    viewer.data().double_sided = true;                        // Prevenir caras oscuras por normales invertidas
+    // 4. Imprimir estadisticas a la consola
+    std::cout << "\n================ ESTADISTICAS ================" << std::endl;
+    std::cout << "Metodo utilizado: " << (method == 0 ? "Harmonic" : (method == 1 ? "LSCM" : "ARAP")) << std::endl;
+    std::cout << "Tiempo de CPU: " << compute_time << " segundos" << std::endl;
+    std::cout << "Triangulos invertidos (Flips): " << num_flips << std::endl;
+    std::cout << "----------------------------------------------" << std::endl;
+    std::cout << "Distorsion Conformal (MIPS, ideal=2.0)" << std::endl;
+    std::cout << "  Media ponderada: " << avg_mips << std::endl;
+    std::cout << "  Maximo error: " << max_mips << std::endl;
+    std::cout << "----------------------------------------------" << std::endl;
+    std::cout << "Distorsion por Estiramiento (L2, ideal=1.0)" << std::endl;
+    std::cout << "  Media ponderada: " << avg_l2 << std::endl;
+    std::cout << "  Maximo error: " << max_l2 << std::endl;
+    std::cout << "==============================================\n" << std::endl;
 
-    // Configurar ImGui
-    igl::opengl::glfw::imgui::ImGuiPlugin plugin;
-    viewer.plugins.push_back(&plugin);
+    // 5. Guardar la malla 3D con sus atributos UV en formato OBJ
+    if (V_uv.rows() > 0) {
+        // Matrices vacías para normales (las calcularemos después o las ignoramos si solo queremos UVs)
+        Eigen::MatrixXd CN;
+        Eigen::MatrixXi FN;
 
-    igl::opengl::glfw::imgui::ImGuiMenu menu;
-    plugin.widgets.push_back(&menu);
+        // F actúa también como FTC (Índices de caras de las UVs), 
+        // ya que cada vértice i tiene su respectiva coordenada UV i.
+        if (igl::writeOBJ(output_file, V, F, CN, FN, V_uv, F)) {
+            std::cout << "Malla 3D y coordenadas UV guardadas exitosamente en: " << output_file << std::endl;
+        }
+        else {
+            std::cerr << "Error al guardar el archivo de salida." << std::endl;
+            return 1;
+        }
+    }
 
-    // Definir la interfaz de usuario
-    menu.callback_draw_viewer_window = [&]()
-        {
-            ImGui::Text("TFM - Parametrización de Mallas");
-            ImGui::Spacing();
-
-            // Selector de método
-            ImGui::Combo("Algoritmo", &current_method, "Harmonic (Tutte)\0LSCM\0ARAP\0");
-
-            if (ImGui::Button("Calcular Parametrización", ImVec2(-1, 0))) {
-                compute_parameterization();
-                // Actualizar vista
-                if (show_2d) viewer.data().set_vertices(V_uv);
-                viewer.data().set_uv(V_uv);
-                update_colors(viewer);
-            }
-
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-            // Selector de Métrica
-            ImGui::Text("Análisis de Distorsión");
-            if (ImGui::Combo("Métrica", &current_metric, "Ninguna (Color sólido)\0MIPS (Conformal)\0L2 Stretch (Distancias)\0Cambio de Area\0")) {
-                update_colors(viewer); // Refrescar color al cambiar de métrica
-            }
-
-            // --- NUEVOS CONTROLES DE RANGO DE COLOR ---
-            if (current_metric != 0) {
-                ImGui::Indent(); // Tabulamos un poco para que quede bonito
-                if (ImGui::Checkbox("Auto-Escalar Color", &auto_scale)) {
-                    update_colors(viewer);
-                }
-
-                if (!auto_scale) {
-                    // Si el usuario mueve estos sliders, repintamos en tiempo real
-                    if (ImGui::DragFloat("Rango Min", &metric_min, 0.05f)) update_colors(viewer);
-                    if (ImGui::DragFloat("Rango Max", &metric_max, 0.05f)) update_colors(viewer);
-                }
-                ImGui::Unindent();
-            }
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-            // Controles de Vista
-            ImGui::Text("Vista");
-            if (ImGui::RadioButton("Modelo 3D", !show_2d)) {
-                show_2d = false;
-                viewer.data().set_vertices(V);
-                viewer.data().compute_normals();
-                viewer.core().align_camera_center(V, F);
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Espacio UV (2D)", show_2d)) {
-                if (V_uv.rows() > 0) {
-                    show_2d = true;
-                    // En libigl, pasamos las uvs como vértices, rellenando Z con 0
-                    Eigen::MatrixXd V_flat = Eigen::MatrixXd::Zero(V_uv.rows(), 3);
-                    V_flat.leftCols(2) = V_uv;
-                    viewer.data().set_vertices(V_flat);
-                    viewer.core().align_camera_center(V_flat, F);
-                }
-            }
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-            // --- PANEL DE ESTADÍSTICAS ---
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Resultados Numericos"); // Título en color verde
-            ImGui::Text("Tiempo de CPU: %.4f s", compute_time);
-
-            if (num_flips > 0) {
-                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Triangulos invertidos (Flips): %d", num_flips);
-            }
-            else {
-                ImGui::Text("Triangulos invertidos: 0 (Biyectivo)");
-            }
-
-            ImGui::Spacing();
-            ImGui::Text("Distorsion Conformal (MIPS, ideal=2.0)");
-            ImGui::BulletText("Media ponderada: %.3f", avg_mips);
-            ImGui::BulletText("Maximo error: %.3f", max_mips);
-
-            ImGui::Spacing();
-            ImGui::Text("Distorsion por Estiramiento (L2, ideal=1.0)");
-            ImGui::BulletText("Media ponderada: %.3f", avg_l2);
-            ImGui::BulletText("Maximo error: %.3f", max_l2);
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-            // Botón opcional para guardar PLY
-            if (ImGui::Button("Guardar Malla Plana (.ply)", ImVec2(-1, 0))) {
-                if (V_uv.rows() > 0) {
-                    Eigen::MatrixXd V_flat = Eigen::MatrixXd::Zero(V_uv.rows(), 3);
-                    V_flat.leftCols(2) = V_uv;
-                    igl::writePLY("parametrizacion_exportada.ply", V_flat, F);
-                    std::cout << "Malla 2D guardada exitosamente." << std::endl;
-                }
-                else {
-                    std::cerr << "Debe calcular una parametrización primero." << std::endl;
-                }
-            }
-
-            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-            ImGui::Text("Configuracion de Renderizado");
-
-            // 1. Doble cara (Ayuda muchísimo si las normales están invertidas)
-            ImGui::Checkbox("Iluminar ambas caras (Double Sided)", &viewer.data().double_sided);
-
-            
-
-            // 3. Mover la posición de la luz
-            // Extraemos la posición actual de la luz a un array compatible con ImGui
-            float light_pos[3] = {
-                viewer.core().light_position(0),
-                viewer.core().light_position(1),
-                viewer.core().light_position(2)
-            };
-            if (ImGui::DragFloat3("Posicion Luz", light_pos, 0.1f)) {
-                // Si el usuario mueve el slider, actualizamos la luz en libigl
-                viewer.core().light_position << light_pos[0], light_pos[1], light_pos[2];
-            }
-
-            // 4. Cambiar el color de fondo (Un fondo más claro ayuda al contraste)
-            float bg_color[3] = {
-                viewer.core().background_color(0),
-                viewer.core().background_color(1),
-                viewer.core().background_color(2)
-            };
-            if (ImGui::ColorEdit3("Color de Fondo", bg_color)) {
-                viewer.core().background_color << bg_color[0], bg_color[1], bg_color[2], 1.0f;
-            }
-        };
-
-    // Calcular una vez por defecto al iniciar
-    compute_parameterization();
-    viewer.data().set_uv(V_uv);
-    update_colors(viewer);
-
-    viewer.launch();
     return 0;
 }
